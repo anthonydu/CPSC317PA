@@ -113,17 +113,36 @@ public class DNSLookupService {
      *
      * @param question Host name and record type/class to be used for the query.
      */
-    public Collection<CommonResourceRecord> iterativeQuery(DNSQuestion question)
-            throws DNSErrorException {
+    public Collection<CommonResourceRecord> iterativeQuery(DNSQuestion question) {
         /* TO/DO: To be implemented by the student */
-
         for (int i = 0; i < MAX_INDIRECTION_LEVEL_NS; i++) {
-            List<CommonResourceRecord> cachedResults = cache.getCachedResults(question);
-            List<CommonResourceRecord> bestNameservers = cache.getBestNameservers(question);
-            if (cachedResults.size() > 0)
+            Collection<CommonResourceRecord> cachedResults = cache.getCachedResults(question);
+            Collection<CommonResourceRecord> bestNameservers = cache.getBestNameservers(question);
+            Collection<CommonResourceRecord> bestKnownNameservers = cache.filterByKnownIPAddress(bestNameservers);
+            if (containsAnswer(cachedResults, question)) {
                 return cachedResults;
-            individualQueryProcess(question,
-                    DNSCache.stringToInetAddress(bestNameservers.get(0).getTextResult()));
+            }
+            for (CommonResourceRecord cachedResult : cachedResults) {
+                if (cachedResult.getRecordType() == RecordType.CNAME)
+                    return cachedResults;
+            }
+            if (bestKnownNameservers.isEmpty())
+                for (CommonResourceRecord bestNameserver : bestNameservers)
+                    try {
+                        getResultsFollowingCNames(DNSCache.AQuestion(bestNameserver.getTextResult()),
+                                MAX_INDIRECTION_LEVEL_NS);
+                        break;
+                    } catch (DNSErrorException e) {
+                        continue;
+                    }
+            else
+                for (CommonResourceRecord bestKnownNameserver : bestKnownNameservers)
+                    try {
+                        individualQueryProcess(question, bestKnownNameserver.getInetResult());
+                        break;
+                    } catch (DNSErrorException e) {
+                        continue;
+                    }
         }
         return cache.getCachedResults(question);
     }
@@ -168,11 +187,13 @@ public class DNSLookupService {
                 Set<ResourceRecord> ans = processResponse(response);
                 if (!response.getQR())
                     continue;
-                if (response.getTC()) {
-                    messageLength = MAX_EDNS_MESSAGE_LENGTH;
-                    OPTResourceRecord opt = new OPTResourceRecord(messageLength, 0, new byte[0], question);
-                    message.addResourceRecord(opt, "additional");
-                } else if (response.getID() == message.getID()) {
+                // if (response.getTC()) {
+                // messageLength = MAX_EDNS_MESSAGE_LENGTH;
+                // OPTResourceRecord opt = new OPTResourceRecord(messageLength, 0, new byte[0],
+                // question);
+                // message.addResourceRecord(opt, "additional");
+                // } else
+                if (response.getID() == message.getID()) {
                     return ans;
                 }
             } catch (SocketException e) {
@@ -226,7 +247,7 @@ public class DNSLookupService {
     public Set<ResourceRecord> processResponse(DNSMessage message) throws DNSErrorException {
         /* TO/DO: To be implemented by the student */
         if (message.getRcode() != 0)
-            throw new DNSErrorException("RCODE: " + message.getRcode());
+            throw new DNSErrorException("RCODE is " + message.getRcode());
         message.getQuestion();
         Set<ResourceRecord> rrs = new HashSet<>();
         int num_answers = message.getANCount();
