@@ -123,8 +123,9 @@ public class DNSLookupService {
                 return cachedResults;
             }
             for (CommonResourceRecord cachedResult : cachedResults) {
-                if (cachedResult.getRecordType() == RecordType.CNAME)
+                if (cachedResult.getRecordType() == RecordType.CNAME) {
                     return cachedResults;
+                }
             }
             if (bestKnownNameservers.isEmpty())
                 for (CommonResourceRecord bestNameserver : bestNameservers)
@@ -175,7 +176,6 @@ public class DNSLookupService {
             throws DNSErrorException {
         /* TO/DO: To be implemented by the student */
         DNSMessage message = buildQuery(question);
-        message.getQuestion();
         verbose.printQueryToSend("UDP", question, server, message.getID());
         int messageLength = MAX_DNS_MESSAGE_LENGTH;
         for (int i = 0; i < MAX_QUERY_ATTEMPTS; i++) {
@@ -187,13 +187,11 @@ public class DNSLookupService {
                 Set<ResourceRecord> ans = processResponse(response);
                 if (!response.getQR())
                     continue;
-                // if (response.getTC()) {
-                // messageLength = MAX_EDNS_MESSAGE_LENGTH;
-                // OPTResourceRecord opt = new OPTResourceRecord(messageLength, 0, new byte[0],
-                // question);
-                // message.addResourceRecord(opt, "additional");
-                // } else
-                if (response.getID() == message.getID()) {
+                if (response.getTC() && messageLength != MAX_EDNS_MESSAGE_LENGTH) {
+                    messageLength = MAX_EDNS_MESSAGE_LENGTH;
+                    OPTResourceRecord opt = new OPTResourceRecord(messageLength, 0, new byte[0], question);
+                    message.addResourceRecord(opt, "additional");
+                } else if (response.getID() == message.getID()) {
                     return ans;
                 }
             } catch (SocketException e) {
@@ -271,8 +269,10 @@ public class DNSLookupService {
         verbose.printAdditionalInfoHeader(num_additional);
         for (int i = 0; i < num_additional; i++) {
             ResourceRecord rr = message.getRR();
-            rrs.add(rr);
-            cache.addResult((CommonResourceRecord) rr);
+            if (rr.getRecordType() != RecordType.OPT) {
+                rrs.add(rr);
+                cache.addResult((CommonResourceRecord) rr);
+            }
             verbose.printIndividualResourceRecord(rr, rr.getRecordType().getCode(), rr.getRecordClassCode());
         }
         return rrs;
