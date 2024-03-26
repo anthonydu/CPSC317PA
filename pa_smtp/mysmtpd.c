@@ -238,6 +238,7 @@ void handle_client(int fd) {
   ms->fd = fd;
   ms->nb = nb_create(fd, MAX_LINE_LENGTH);
   ms->state = Undefined;
+  user_list_destroy(ms->receivers);
   uname(&ms->my_uname);
 
   if (send_formatted(fd, "220 %s Service ready\r\n", ms->my_uname.nodename)
