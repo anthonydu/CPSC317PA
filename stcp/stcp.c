@@ -46,6 +46,7 @@ unsigned int hostname_to_ipaddr(const char *s) {
 void dump(char dir, void *pkt, int len) {
     tcpheader *stcpHeader = (tcpheader *) pkt;
     logLog("packet", "%c %s payload %d bytes", dir, tcpHdrToString(stcpHeader), len - sizeof(tcpheader));
+    printf("             sender: %c %s payload %d bytes\n", dir, tcpHdrToString(stcpHeader), len - sizeof(tcpheader));
     fflush(stdout);
 }
 
