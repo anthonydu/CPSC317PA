@@ -34,13 +34,11 @@ typedef struct {
   int fd;
   unsigned int seqNo;
   unsigned int ackNo;
-  unsigned int lastAck;
   int timeout;
   int windowSize;
-  int inFlight;
   int sendersPort;
   int receiversPort;
-  int endAck;
+  int inFlight;
 
   /* YOUR CODE HERE */
 
@@ -49,46 +47,54 @@ typedef struct {
 
 void tcpSend(stcp_send_ctrl_blk *cb, int flags, unsigned char *data, int len) {
   int size = sizeof(tcpheader) + len;
-  packet *pkt = malloc(size);
+  packet pkt;
 
-  createSegment(pkt, flags, STCP_MAXWIN, cb->seqNo, cb->ackNo, NULL, len);
-  pkt->hdr->srcPort = cb->sendersPort;
-  pkt->hdr->dstPort = cb->receiversPort;
-  memcpy(pkt->data + sizeof(tcpheader), data, len);
+  createSegment(&pkt, flags, STCP_MAXWIN, cb->seqNo, cb->ackNo, NULL, len);
+  pkt.hdr->srcPort = cb->sendersPort;
+  pkt.hdr->dstPort = cb->receiversPort;
+  memcpy(pkt.data + sizeof(tcpheader), data, len);
 
-  dump('s', pkt, size);
+  dump('s', &pkt, size);
 
-  htonHdr(pkt->hdr);
+  htonHdr(pkt.hdr);
 
-  pkt->hdr->checksum = ipchecksum(pkt, size);
+  pkt.hdr->checksum = ipchecksum(&pkt, size);
 
-  write(cb->fd, pkt, size);
+  write(cb->fd, &pkt, size);
 
-  cb->inFlight++;
+  cb->inFlight += size;
 }
 
-void tcpReceive(stcp_send_ctrl_blk *cb) {
-  packet *pkt = malloc(sizeof(packet));
-  initPacket(pkt, NULL, sizeof(packet));
+int tcpReceive(stcp_send_ctrl_blk *cb) {
+  packet pkt;
+  initPacket(&pkt, NULL, sizeof(packet));
 
-  int size
-      = readWithTimeout(cb->fd, (unsigned char *)pkt, STCP_INFINITE_TIMEOUT);
-  ntohHdr(pkt->hdr);
-  pkt->len = size;
+  int size = readWithTimeout(cb->fd, (unsigned char *)&pkt, cb->timeout);
 
-  dump('r', pkt, size);
-
-  if (getSyn(pkt->hdr) || getFin(pkt->hdr)) {
-    cb->ackNo = pkt->hdr->seqNo + 1;
-  } else {
-    cb->ackNo = pkt->hdr->seqNo + payloadSize(pkt);
+  if (size == STCP_READ_TIMED_OUT) {
+    cb->timeout = stcpNextTimeout(cb->timeout);
+    return STCP_READ_TIMED_OUT;
+  } else if (size == STCP_READ_PERMANENT_FAILURE) {
+    return STCP_READ_PERMANENT_FAILURE;
   }
 
-  cb->seqNo = pkt->hdr->ackNo;
-  cb->windowSize = pkt->hdr->windowSize;
+  ntohHdr(pkt.hdr);
+  pkt.len = size;
+
+  dump('r', &pkt, size);
+
+  if (getSyn(pkt.hdr) || getFin(pkt.hdr)) {
+    cb->ackNo = pkt.hdr->seqNo + 1;
+  } else {
+    cb->ackNo = pkt.hdr->seqNo + payloadSize(&pkt);
+  }
+
+  cb->seqNo = pkt.hdr->ackNo;
+  cb->windowSize = pkt.hdr->windowSize;
   cb->timeout = STCP_INITIAL_TIMEOUT;
-  cb->inFlight--;
-  cb->lastAck = pkt->hdr->ackNo;
+  cb->inFlight -= size;
+
+  return size;
 }
 
 /*
@@ -109,9 +115,15 @@ void tcpReceive(stcp_send_ctrl_blk *cb) {
 int stcp_send(stcp_send_ctrl_blk *stcp_CB, unsigned char *data, int length) {
   /* YOUR CODE HERE */
 
-  tcpSend(stcp_CB, ACK, data, length);
-
-  tcpReceive(stcp_CB);
+  if (length > STCP_MSS) {
+    for (int i = 0; i < length; i += STCP_MSS) {
+      tcpSend(stcp_CB, ACK, data + i, min(STCP_MSS, length - i));
+      tcpReceive(stcp_CB);
+    }
+  } else {
+    tcpSend(stcp_CB, ACK, data, length);
+    tcpReceive(stcp_CB);
+  }
 
   stcp_CB->state = STCP_SENDER_CLOSING;
 
@@ -149,13 +161,12 @@ stcp_send_ctrl_blk *stcp_open(char *destination,
   cb->state = STCP_SENDER_CLOSED;
   cb->seqNo = rand() % 4294967296;
   cb->ackNo = 0;
-  cb->lastAck = 0;
   cb->fd = fd;
   cb->timeout = STCP_INITIAL_TIMEOUT;
   cb->windowSize = STCP_MAXWIN;
-  cb->inFlight = 0;
   cb->sendersPort = sendersPort;
   cb->receiversPort = receiversPort;
+  cb->inFlight = 0;
 
   tcpSend(cb, SYN, NULL, 0);
 
@@ -179,7 +190,7 @@ stcp_send_ctrl_blk *stcp_open(char *destination,
  */
 int stcp_close(stcp_send_ctrl_blk *cb) {
   /* YOUR CODE HERE */
-  tcpSend(cb, FIN, NULL, 0);
+  tcpSend(cb, FIN | ACK, NULL, 0);
 
   cb->state = STCP_SENDER_FIN_WAIT;
 
