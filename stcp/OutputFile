@@ -207,6 +207,20 @@ stcp_send_ctrl_blk *stcp_open(char *destination,
     }
   }
 
+  while (1) {
+    tcpSend(cb, ACK, NULL, 0);
+
+    int ackStatus = tcpReceive(cb);
+    if (ackStatus == STCP_READ_TIMED_OUT) {
+      cb->timeout = stcpNextTimeout(cb->timeout);
+      continue;
+    } else if (ackStatus == STCP_READ_PERMANENT_FAILURE) {
+      return NULL;
+    } else {
+      break;
+    }
+  }
+
   cb->state = STCP_SENDER_ESTABLISHED;
 
   return cb;
@@ -266,4 +280,79 @@ int getDefaultPort() {
  * This application is to invoke the send-side functionality.
  */
 int main(int argc, char **argv) {
-  stcp_send
+  stcp_send_ctrl_blk *cb;
+
+  char *destinationHost;
+  int receiversPort, sendersPort;
+  char *filename = NULL;
+  int file;
+  /* You might want to change the size of this buffer to test how your
+   * code deals with different packet sizes.
+   */
+  unsigned char buffer[STCP_MSS];
+  int num_read_bytes;
+
+  logConfig("sender", "init,segment,error,failure");
+  /* Verify that the arguments are right */
+  if (argc > 5 || argc == 1) {
+    fprintf(stderr,
+            "usage: sender DestinationIPAddress/Name receiveDataOnPort "
+            "sendDataToPort filename\n");
+    fprintf(stderr, "or   : sender filename\n");
+    exit(1);
+  }
+  if (argc == 2) {
+    filename = argv[1];
+    argc--;
+  }
+
+  // Extract the arguments
+  destinationHost = argc > 1 ? argv[1] : "localhost";
+  receiversPort = argc > 2 ? atoi(argv[2]) : getDefaultPort();
+  sendersPort = argc > 3 ? atoi(argv[3]) : getDefaultPort() + 1;
+  if (argc > 4) filename = argv[4];
+
+  /* Open file for transfer */
+  file = open(filename, O_RDONLY);
+  if (file < 0) {
+    logPerror(filename);
+    exit(1);
+  }
+
+  /*
+   * Open connection to destination.  If stcp_open succeeds the
+   * control block should be correctly initialized.
+   */
+  cb = stcp_open(destinationHost, sendersPort, receiversPort);
+  if (cb == NULL) {
+    /* YOUR CODE HERE */
+    printf("Error opening connection\n");
+    exit(1);
+  }
+
+  /* Start to send data in file via STCP to remote receiver. Chop up
+   * the file into pieces as large as max packet size and transmit
+   * those pieces.
+   */
+  while (1) {
+    num_read_bytes = read(file, buffer, sizeof(buffer));
+
+    /* Break when EOF is reached */
+    if (num_read_bytes <= 0) break;
+
+    if (stcp_send(cb, buffer, num_read_bytes) == STCP_ERROR) {
+      /* YOUR CODE HERE */
+      printf("Error sending data\n");
+      exit(1);
+    }
+  }
+
+  /* Close the connection to remote receiver */
+  if (stcp_close(cb) == STCP_ERROR) {
+    /* YOUR CODE HERE */
+    printf("Error closing connection\n");
+    exit(1);
+  }
+
+  return 0;
+}

@@ -207,6 +207,20 @@ stcp_send_ctrl_blk *stcp_open(char *destination,
     }
   }
 
+  while (1) {
+    tcpSend(cb, ACK, NULL, 0);
+
+    int ackStatus = tcpReceive(cb);
+    if (ackStatus == STCP_READ_TIMED_OUT) {
+      cb->timeout = stcpNextTimeout(cb->timeout);
+      continue;
+    } else if (ackStatus == STCP_READ_PERMANENT_FAILURE) {
+      return NULL;
+    } else {
+      break;
+    }
+  }
+
   cb->state = STCP_SENDER_ESTABLISHED;
 
   return cb;
