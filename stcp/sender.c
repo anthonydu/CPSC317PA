@@ -72,38 +72,39 @@ void tcpSend(stcp_send_ctrl_blk *cb, int flags, unsigned char *data, int len) {
 int tcpReceive(stcp_send_ctrl_blk *cb) {
   packet pkt;
   int packetLength;
-  // while (1) {
-  initPacket(&pkt, NULL, sizeof(packet));
+  while (1) {
+    initPacket(&pkt, NULL, sizeof(packet));
 
-  int readStatus = readWithTimeout(cb->fd, (unsigned char *)&pkt, cb->timeout);
-  packetLength = readStatus;
+    int readStatus
+        = readWithTimeout(cb->fd, (unsigned char *)&pkt, cb->timeout);
+    packetLength = readStatus;
 
-  if (readStatus == STCP_READ_TIMED_OUT) {
-    cb->timeout = stcpNextTimeout(cb->timeout);
-    return STCP_READ_TIMED_OUT;
-  } else if (readStatus == STCP_READ_PERMANENT_FAILURE) {
-    return STCP_READ_PERMANENT_FAILURE;
+    if (readStatus == STCP_READ_TIMED_OUT) {
+      cb->timeout = stcpNextTimeout(cb->timeout);
+      return STCP_READ_TIMED_OUT;
+    } else if (readStatus == STCP_READ_PERMANENT_FAILURE) {
+      return STCP_READ_PERMANENT_FAILURE;
+    }
+
+    ntohHdr(pkt.hdr);
+
+    dump('r', &pkt, packetLength);
+
+    if (!getSyn(pkt.hdr) && !getFin(pkt.hdr)
+        && ((pkt.hdr->ackNo != cb->expectedAckNo)
+            || (pkt.hdr->seqNo != cb->ackNo))) {
+      printf("          sender: expects seq %d ack %d\n",
+             cb->seqNo,
+             cb->expectedAckNo);
+      printf(
+          "          sender: dropped out of order, duplicate, or corrupted "
+          "packet seq %d ack %d\n",
+          pkt.hdr->seqNo,
+          pkt.hdr->ackNo);
+    } else {
+      break;
+    }
   }
-
-  ntohHdr(pkt.hdr);
-
-  dump('r', &pkt, packetLength);
-
-  // if (!getSyn(pkt.hdr)
-  //     && ((pkt.hdr->ackNo != cb->expectedAckNo)
-  //         || (pkt.hdr->seqNo != cb->ackNo))) {
-  //   printf("          sender: expects seq %d ack %d\n",
-  //          cb->seqNo,
-  //          cb->expectedAckNo);
-  //   printf(
-  //       "          sender: dropped out of order, duplicate, or corrupted "
-  //       "packet seq %d ack %d\n",
-  //       pkt.hdr->seqNo,
-  //       pkt.hdr->ackNo);
-  // } else {
-  //   break;
-  // }
-  // }
 
   if (getSyn(pkt.hdr) || getFin(pkt.hdr)) {
     cb->ackNo = pkt.hdr->seqNo + 1;
