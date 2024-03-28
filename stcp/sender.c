@@ -69,19 +69,25 @@ int tcpReceive(stcp_send_ctrl_blk *cb) {
   packet pkt;
   initPacket(&pkt, NULL, sizeof(packet));
 
-  int size = readWithTimeout(cb->fd, (unsigned char *)&pkt, cb->timeout);
+  int readStatus = readWithTimeout(cb->fd, (unsigned char *)&pkt, cb->timeout);
+  int packetLength = readStatus;
 
-  if (size == STCP_READ_TIMED_OUT) {
+  if (readStatus == STCP_READ_TIMED_OUT) {
     cb->timeout = stcpNextTimeout(cb->timeout);
     return STCP_READ_TIMED_OUT;
-  } else if (size == STCP_READ_PERMANENT_FAILURE) {
+  } else if (readStatus == STCP_READ_PERMANENT_FAILURE) {
     return STCP_READ_PERMANENT_FAILURE;
   }
 
   ntohHdr(pkt.hdr);
-  pkt.len = size;
 
-  dump('r', &pkt, size);
+  dump('r', &pkt, packetLength);
+
+  if (pkt.hdr->seqNo <= cb->ackNo) {
+    printf("          sender: dropped out of order or duplicate packet %d\n",
+           pkt.hdr->seqNo);
+    tcpReceive(cb);
+  }
 
   if (getSyn(pkt.hdr) || getFin(pkt.hdr)) {
     cb->ackNo = pkt.hdr->seqNo + 1;
@@ -92,9 +98,9 @@ int tcpReceive(stcp_send_ctrl_blk *cb) {
   cb->seqNo = pkt.hdr->ackNo;
   cb->windowSize = pkt.hdr->windowSize;
   cb->timeout = STCP_INITIAL_TIMEOUT;
-  cb->inFlight -= size;
+  cb->inFlight -= packetLength;
 
-  return size;
+  return packetLength;
 }
 
 /*
@@ -115,14 +121,14 @@ int tcpReceive(stcp_send_ctrl_blk *cb) {
 int stcp_send(stcp_send_ctrl_blk *stcp_CB, unsigned char *data, int length) {
   /* YOUR CODE HERE */
 
-  if (length > STCP_MSS) {
-    for (int i = 0; i < length; i += STCP_MSS) {
-      tcpSend(stcp_CB, ACK, data + i, min(STCP_MSS, length - i));
-      tcpReceive(stcp_CB);
+  for (int i = 0; i < length; i += STCP_MSS) {
+    tcpSend(stcp_CB, ACK, data + i, min(STCP_MSS, length - i));
+    int ackStatus = tcpReceive(stcp_CB);
+    if (ackStatus == STCP_READ_TIMED_OUT) {
+      i -= STCP_MSS;
+    } else if (ackStatus == STCP_READ_PERMANENT_FAILURE) {
+      return STCP_ERROR;
     }
-  } else {
-    tcpSend(stcp_CB, ACK, data, length);
-    tcpReceive(stcp_CB);
   }
 
   stcp_CB->state = STCP_SENDER_CLOSING;
@@ -168,11 +174,20 @@ stcp_send_ctrl_blk *stcp_open(char *destination,
   cb->receiversPort = receiversPort;
   cb->inFlight = 0;
 
-  tcpSend(cb, SYN, NULL, 0);
+  while (1) {
+    tcpSend(cb, SYN, NULL, 0);
 
-  cb->state = STCP_SENDER_SYN_SENT;
+    cb->state = STCP_SENDER_SYN_SENT;
 
-  tcpReceive(cb);
+    int ackStatus = tcpReceive(cb);
+    if (ackStatus == STCP_READ_TIMED_OUT) {
+      continue;
+    } else if (ackStatus == STCP_READ_PERMANENT_FAILURE) {
+      return NULL;
+    } else {
+      break;
+    }
+  }
 
   cb->state = STCP_SENDER_ESTABLISHED;
 
