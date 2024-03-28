@@ -83,12 +83,12 @@ int tcpReceive(stcp_send_ctrl_blk *cb) {
 
   dump('r', &pkt, packetLength);
 
-  // if (pkt.hdr->ackNo <= cb->seqNo - cb->inFlight
-  //     || pkt.hdr->ackNo > cb->seqNo + cb->inFlight) {
-  //   printf("          sender: dropped out of order or duplicate packet %d\n",
-  //          pkt.hdr->ackNo);
-  //   tcpReceive(cb);
-  // }
+  if (pkt.hdr->ackNo < cb->seqNo
+      || (pkt.hdr->seqNo != cb->ackNo && cb->ackNo != 0)) {
+    printf("          sender: dropped out of order or duplicate packet %d\n",
+           pkt.hdr->seqNo);
+    tcpReceive(cb);
+  }
 
   if (getSyn(pkt.hdr) || getFin(pkt.hdr)) {
     cb->ackNo = pkt.hdr->seqNo + 1;
@@ -208,11 +208,11 @@ stcp_send_ctrl_blk *stcp_open(char *destination,
  */
 int stcp_close(stcp_send_ctrl_blk *cb) {
   /* YOUR CODE HERE */
-  tcpSend(cb, FIN | ACK, NULL, 0);
+  // tcpSend(cb, FIN | ACK, NULL, 0);
 
-  cb->state = STCP_SENDER_FIN_WAIT;
+  // cb->state = STCP_SENDER_FIN_WAIT;
 
-  while (1) {
+  for (int i = 0; i < EXCESS_FIN_THRESHOLD; i++) {
     tcpSend(cb, FIN | ACK, NULL, 0);
 
     cb->state = STCP_SENDER_FIN_WAIT;
