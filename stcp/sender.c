@@ -83,11 +83,12 @@ int tcpReceive(stcp_send_ctrl_blk *cb) {
 
   dump('r', &pkt, packetLength);
 
-  if (pkt.hdr->seqNo <= cb->ackNo) {
-    printf("          sender: dropped out of order or duplicate packet %d\n",
-           pkt.hdr->seqNo);
-    tcpReceive(cb);
-  }
+  // if (pkt.hdr->ackNo <= cb->seqNo - cb->inFlight
+  //     || pkt.hdr->ackNo > cb->seqNo + cb->inFlight) {
+  //   printf("          sender: dropped out of order or duplicate packet %d\n",
+  //          pkt.hdr->ackNo);
+  //   tcpReceive(cb);
+  // }
 
   if (getSyn(pkt.hdr) || getFin(pkt.hdr)) {
     cb->ackNo = pkt.hdr->seqNo + 1;
@@ -125,6 +126,7 @@ int stcp_send(stcp_send_ctrl_blk *stcp_CB, unsigned char *data, int length) {
     tcpSend(stcp_CB, ACK, data + i, min(STCP_MSS, length - i));
     int ackStatus = tcpReceive(stcp_CB);
     if (ackStatus == STCP_READ_TIMED_OUT) {
+      stcp_CB->timeout = stcpNextTimeout(stcp_CB->timeout);
       i -= STCP_MSS;
     } else if (ackStatus == STCP_READ_PERMANENT_FAILURE) {
       return STCP_ERROR;
@@ -181,6 +183,7 @@ stcp_send_ctrl_blk *stcp_open(char *destination,
 
     int ackStatus = tcpReceive(cb);
     if (ackStatus == STCP_READ_TIMED_OUT) {
+      cb->timeout = stcpNextTimeout(cb->timeout);
       continue;
     } else if (ackStatus == STCP_READ_PERMANENT_FAILURE) {
       return NULL;
@@ -209,7 +212,20 @@ int stcp_close(stcp_send_ctrl_blk *cb) {
 
   cb->state = STCP_SENDER_FIN_WAIT;
 
-  tcpReceive(cb);
+  while (1) {
+    tcpSend(cb, FIN | ACK, NULL, 0);
+
+    cb->state = STCP_SENDER_FIN_WAIT;
+
+    int ackStatus = tcpReceive(cb);
+    if (ackStatus == STCP_READ_TIMED_OUT) {
+      continue;
+    } else if (ackStatus == STCP_READ_PERMANENT_FAILURE) {
+      return STCP_ERROR;
+    } else {
+      break;
+    }
+  }
 
   tcpSend(cb, ACK, NULL, 0);
 
