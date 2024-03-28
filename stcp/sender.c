@@ -38,7 +38,7 @@ typedef struct {
   int windowSize;
   int sendersPort;
   int receiversPort;
-  int inFlight;
+  unsigned int expectedAckNo;
 
   /* YOUR CODE HERE */
 
@@ -62,15 +62,21 @@ void tcpSend(stcp_send_ctrl_blk *cb, int flags, unsigned char *data, int len) {
 
   write(cb->fd, &pkt, size);
 
-  cb->inFlight += size;
+  if (getSyn(pkt.hdr) || getFin(pkt.hdr)) {
+    cb->expectedAckNo = cb->seqNo + 1;
+  } else {
+    cb->expectedAckNo = cb->seqNo + len;
+  }
 }
 
 int tcpReceive(stcp_send_ctrl_blk *cb) {
   packet pkt;
+  int packetLength;
+  // while (1) {
   initPacket(&pkt, NULL, sizeof(packet));
 
   int readStatus = readWithTimeout(cb->fd, (unsigned char *)&pkt, cb->timeout);
-  int packetLength = readStatus;
+  packetLength = readStatus;
 
   if (readStatus == STCP_READ_TIMED_OUT) {
     cb->timeout = stcpNextTimeout(cb->timeout);
@@ -83,23 +89,31 @@ int tcpReceive(stcp_send_ctrl_blk *cb) {
 
   dump('r', &pkt, packetLength);
 
-  if (pkt.hdr->ackNo < cb->seqNo
-      || (pkt.hdr->seqNo != cb->ackNo && cb->ackNo != 0)) {
-    printf("          sender: dropped out of order or duplicate packet %d\n",
-           pkt.hdr->seqNo);
-    tcpReceive(cb);
-  }
+  // if (!getSyn(pkt.hdr)
+  //     && ((pkt.hdr->ackNo != cb->expectedAckNo)
+  //         || (pkt.hdr->seqNo != cb->ackNo))) {
+  //   printf("          sender: expects seq %d ack %d\n",
+  //          cb->seqNo,
+  //          cb->expectedAckNo);
+  //   printf(
+  //       "          sender: dropped out of order, duplicate, or corrupted "
+  //       "packet seq %d ack %d\n",
+  //       pkt.hdr->seqNo,
+  //       pkt.hdr->ackNo);
+  // } else {
+  //   break;
+  // }
+  // }
 
   if (getSyn(pkt.hdr) || getFin(pkt.hdr)) {
     cb->ackNo = pkt.hdr->seqNo + 1;
   } else {
-    cb->ackNo = pkt.hdr->seqNo + payloadSize(&pkt);
+    cb->ackNo = pkt.hdr->seqNo + packetLength - sizeof(tcpheader);
   }
 
   cb->seqNo = pkt.hdr->ackNo;
   cb->windowSize = pkt.hdr->windowSize;
   cb->timeout = STCP_INITIAL_TIMEOUT;
-  cb->inFlight -= packetLength;
 
   return packetLength;
 }
@@ -174,7 +188,7 @@ stcp_send_ctrl_blk *stcp_open(char *destination,
   cb->windowSize = STCP_MAXWIN;
   cb->sendersPort = sendersPort;
   cb->receiversPort = receiversPort;
-  cb->inFlight = 0;
+  cb->expectedAckNo = 0;
 
   while (1) {
     tcpSend(cb, SYN, NULL, 0);
@@ -298,6 +312,7 @@ int main(int argc, char **argv) {
   if (cb == NULL) {
     /* YOUR CODE HERE */
     printf("Error opening connection\n");
+    exit(1);
   }
 
   /* Start to send data in file via STCP to remote receiver. Chop up
@@ -313,12 +328,15 @@ int main(int argc, char **argv) {
     if (stcp_send(cb, buffer, num_read_bytes) == STCP_ERROR) {
       /* YOUR CODE HERE */
       printf("Error sending data\n");
+      exit(1);
     }
   }
 
   /* Close the connection to remote receiver */
   if (stcp_close(cb) == STCP_ERROR) {
     /* YOUR CODE HERE */
+    printf("Error closing connection\n");
+    exit(1);
   }
 
   return 0;

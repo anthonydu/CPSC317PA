@@ -27,7 +27,10 @@
 static inline int min(int a, int b) { return a < b ? a : b; }
 static inline int max(int a, int b) { return a > b ? a : b; }
 
-static inline int stcpNextTimeout(int timeout) { return min(STCP_MAX_TIMEOUT, timeout * 2); }
+static inline int stcpNextTimeout(int timeout) { 
+    printf("          sender: Timed out, new timeout: %d\n", min(STCP_MAX_TIMEOUT, timeout * 2));
+    return min(STCP_MAX_TIMEOUT, timeout * 2); 
+}
 
 /* In the above if MSS and MTU don't mean anything to you then read the text */
 
